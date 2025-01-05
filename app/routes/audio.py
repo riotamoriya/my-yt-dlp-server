@@ -7,39 +7,40 @@ import logging
 # import yt_dlp
 import os  # これを追加
 
+from urllib.parse import quote  # これを追加
+
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class AudioExtractionRequest(BaseModel):
     url: HttpUrl
 
+
 @router.post("/extract-audio")
 async def extract_audio(request: AudioExtractionRequest):
     try:
         extractor = AudioExtractor()
-        
-        # URLの基本的なバリデーション
-        if not extractor._is_valid_youtube_url(str(request.url)):
-            raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
-            
         result = await extractor.extract(str(request.url))
         
-        # ファイルの存在確認
-        if not os.path.exists(result["file_path"]):
-            raise HTTPException(status_code=400, detail="File conversion failed")
+        # ファイル名を適切にエンコード
+        filename = result["filename"]
+        encoded_filename = quote(filename)
         
         response = FileResponse(
-            result["file_path"],
+            path=result["file_path"],
             media_type="audio/mpeg",
-            filename=result["filename"]
+            filename=filename  # オリジナルのファイル名
         )
+        
+        # Content-Dispositionヘッダーを明示的に設定
+        response.headers["Content-Disposition"] = f'attachment; filename="{encoded_filename}"; filename*=UTF-8\'\'{encoded_filename}'
         
         response.background = lambda: cleanup_temp_file(result["file_path"])
         
         return response
 
     except HTTPException as he:
-        # エラーログを追加
         logger.error(f"HTTP Exception: {he.detail}")
         raise he
     except Exception as e:
