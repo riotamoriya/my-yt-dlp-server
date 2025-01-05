@@ -8,6 +8,7 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
 import requests
 
+
 logger = logging.getLogger(__name__)
 
 class AudioExtractor:
@@ -28,45 +29,47 @@ class AudioExtractor:
             'no_warnings': True,
         }
 
+
+
     async def _set_media_tags(self, file_path: str, info: Dict) -> None:
         """メディアタグを設定"""
         try:
-            try:
-                audio = EasyID3(file_path)
-            except:
-                audio = ID3()
-                audio.save(file_path)
-                audio = EasyID3(file_path)
+            # サムネイル画像のURLを取得
+            thumbnail_url = info.get('thumbnail')
+            if not thumbnail_url:
+                logger.warning("No thumbnail URL available.")
+                return
 
-            # 基本的なタグを設定
-            audio['title'] = info.get('title', '')
-            audio['artist'] = info.get('uploader', '')
-            audio['album'] = 'YouTube Music'
-            if info.get('upload_date'):
-                audio['date'] = f"{info['upload_date'][:4]}"  # 年のみ使用
-            audio.save()
+            # サムネイル画像をダウンロードして保存
+            response = requests.get(thumbnail_url, timeout=10)
+            if response.status_code == 200:
+                thumbnail_path = f"{self.temp_dir}/{info['id']}.jpg"
+                with open(thumbnail_path, "wb") as f:
+                    f.write(response.content)
+            else:
+                logger.warning(f"Failed to fetch thumbnail: {response.status_code}")
+                return
 
-            # サムネイル画像を設定
-            if info.get('thumbnail'):
-                try:
-                    audio = ID3(file_path)
-                    response = requests.get(info['thumbnail'])
-                    if response.status_code == 200:
-                        audio.add(APIC(
-                            encoding=3,
-                            mime='image/jpeg',
-                            type=3,
-                            desc='Cover',
-                            data=response.content
-                        ))
-                        audio.save()
-                except Exception as e:
-                    logger.error(f"Error setting thumbnail: {str(e)}")
+            # サムネイル画像が正常に保存された場合、MP3に埋め込む
+            if os.path.exists(thumbnail_path):
+                audio = ID3(file_path)
+                
+                # サムネイル画像を追加する処理
+                with open(thumbnail_path, "rb") as img_file:
+                    audio.add(APIC(
+                        encoding=3,
+                        mime='image/jpeg',  # MIMEタイプを設定
+                        type=3,  # Cover (front)
+                        desc='Cover',
+                        data=img_file.read()  # サムネイル画像のデータを埋め込む
+                    ))
+                    audio.save()
 
+                logger.info("Thumbnail successfully embedded into the MP3 file.")
+            else:
+                logger.warning("Thumbnail file not found in temp directory.")
         except Exception as e:
-            logger.error(f"Error setting media tags: {str(e)}")
-            # タグ設定の失敗は致命的ではないのでエラーは投げない
-
+            logger.error(f"Error embedding thumbnail: {str(e)}")
     async def extract(self, url: str) -> Dict:
         """音声を抽出してタグを設定"""
         try:
@@ -77,8 +80,26 @@ class AudioExtractor:
 
             # ファイル名から使用できない文字を除去
             safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            output_path = f"{self.temp_dir}/{safe_title}"
-            self.ydl_opts['outtmpl'] = output_path + '.%(ext)s'
+            # output_path = f"{self.temp_dir}/{safe_title}"
+            self.ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [
+                    {
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '320',
+                    },
+                    {
+                        'key': 'EmbedThumbnail',  # サムネイルを埋め込む設定
+                    }
+                ],
+                'writethumbnail': True,  # サムネイルを保存するオプション
+                'outtmpl': f'{self.temp_dir}/%(id)s.%(ext)s',  # 出力パス
+                'quiet': True,
+                'no_warnings': True,
+            }
+
+
 
             # 音声をダウンロード
             output_file = await self._download_and_convert(url, info['id'])

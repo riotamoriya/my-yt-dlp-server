@@ -1,6 +1,21 @@
+README.md
 # YouTube Audio Extractor
 
 FastAPIベースのYouTube動画から音声を抽出するAPIサービス。
+
+## 使用方法
+このコンテナは、バックエンドで使用することができます。ポート7783に対して、以下のようなRESTアクセスを行うことで使用できます。UIは適当に作成してください。基本的にはアドオンとして使用すると便利です。
+
+```bash
+curl -X 'POST' \
+  'http://localhost:7783/api/v1/extract-audio' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "url": "https://www.youtube.com/watch?v=rBL930dHVkY"
+}'
+```
+
 
 ## 機能
 - YouTube URLから音声(MP3)を抽出

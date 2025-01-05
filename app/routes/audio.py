@@ -4,9 +4,6 @@ from pydantic import BaseModel, HttpUrl
 from services.extractor import AudioExtractor
 from utils.file_handler import cleanup_temp_file
 import logging
-# import yt_dlp
-import os  # これを追加
-
 from urllib.parse import quote  # これを追加
 
 
