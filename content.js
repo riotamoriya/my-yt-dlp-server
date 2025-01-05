@@ -5,13 +5,35 @@ function addMp3SaveButton() {
 
   console.log('Adding MP3 save button');
 
+  // ファイル名を取得する関数
+  function getFilenameFromResponse(response) {
+    const disposition = response.headers.get('content-disposition');
+    console.log('Content-Disposition:', disposition); // デバッグ用
+
+    if (disposition && disposition.includes('filename=')) {
+      let filename = '';
+      const matches = /filename\*=UTF-8''(.+)/.exec(disposition);
+      if (matches && matches[1]) {
+        filename = decodeURIComponent(matches[1]);
+      } else {
+        const matches = /filename="(.+)"/.exec(disposition);
+        if (matches && matches[1]) {
+          filename = matches[1];
+        }
+      }
+      console.log('Extracted filename:', filename); // デバッグ用
+      return filename || 'downloaded.mp3';
+    }
+    return 'downloaded.mp3';
+  }
+
   // ボタン要素を作成
   const saveButton = document.createElement('button');
   saveButton.id = 'mp3-save-button';
   saveButton.textContent = 'MP3を保存';
   saveButton.classList.add('mp3-save-btn');
 
-  // スタイル
+  // スタイル設定（既存のまま）
   const style = document.createElement('style');
   style.textContent = `
     .mp3-save-btn {
@@ -34,7 +56,7 @@ function addMp3SaveButton() {
     }
   `;
 
-  // 動画の下にあるセクションを見つける
+  // コンテナ検索（既存のまま）
   const possibleContainers = [
     'div#actions.ytd-video-primary-info-renderer',
     'div#actions-inner',
@@ -60,66 +82,62 @@ function addMp3SaveButton() {
   actionSection.appendChild(saveButton);
   actionSection.appendChild(style);
 
-  // ボタンクリック時のイベントリスナー
+  // 単一のイベントリスナー
   saveButton.addEventListener('click', async () => {
     try {
-      // ボタンを "loading" 状態に
       saveButton.classList.add('loading');
       saveButton.textContent = 'ダウンロード中...';
 
-      // 現在のページのURLを取得
       const videoUrl = window.location.href;
-
-      // 音声抽出リクエスト
-      const response = await fetch('/api/v1/extract-audio', {
+      const response = await fetch('http://localhost:7783/api/v1/extract-audio', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
+            'Content-Type': 'application/json',
+            'Accept': '*/*'
         },
         body: JSON.stringify({ url: videoUrl })
-      });
+    });
+    
+    // レスポンスヘッダーをログ出力
+    console.log('Response headers:', response.headers);
+    console.log('Content-Disposition:', response.headers.get('content-disposition'));
 
-      // レスポンスチェック
+
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || '音声抽出に失敗しました');
       }
 
-      // Blobとしてレスポンスを取得
       const blob = await response.blob();
+      const filename = getFilenameFromResponse(response);
+      console.log('Using filename:', filename); // デバッグ用
 
-      // ブラウザのデフォルト保存機能を使用
       const link = document.createElement('a');
       link.href = window.URL.createObjectURL(blob);
-      link.download = ''; // Content-Disposition ヘッダーの値が使用される
+      link.download = filename;
       link.click();
 
-      // ボタンを通常の状態に戻す
+      window.URL.revokeObjectURL(link.href);
+
       saveButton.classList.remove('loading');
       saveButton.textContent = 'MP3を保存';
-
       alert('MP3ファイルが保存されました');
     } catch (error) {
-      // ボタンを通常の状態に戻す
       saveButton.classList.remove('loading');
       saveButton.textContent = 'MP3を保存';
-
-      // エラー処理
       console.error('音声抽出エラー:', error);
       alert(`エラーが発生しました: ${error.message}`);
     }
   });
 }
 
-// ページ読み込み時に実行
+// 既存の初期化コード
 addMp3SaveButton();
 
-// YouTubeの動的なページ読み込みに対応するため、定期的にチェック
 const observer = new MutationObserver((mutations) => {
   mutations.forEach((mutation) => {
     if (mutation.type === 'childList') {
-      // ボタンがない場合のみ追加
       if (!document.getElementById('mp3-save-button')) {
         addMp3SaveButton();
       }
@@ -127,11 +145,9 @@ const observer = new MutationObserver((mutations) => {
   });
 });
 
-// ページ全体の変更を監視
 observer.observe(document.body, {
   childList: true,
   subtree: true
 });
 
-// 初期読み込み後、1秒後にもう一度試行（動的コンテンツ対応）
 setTimeout(addMp3SaveButton, 1000);
