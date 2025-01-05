@@ -1,0 +1,43 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import logging
+from routes import audio  # 相対インポートを絶対インポートに変更
+
+
+# ロギングの設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# FastAPIアプリケーションの初期化
+app = FastAPI(
+    title="YouTube Audio Extractor",
+    description="Extract high quality audio from YouTube videos",
+    version="1.0.0"
+)
+
+# CORSミドルウェアの設定
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 本番環境では適切に制限する
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# リクエストモデル
+class AudioExtractionRequest(BaseModel):
+    url: str
+
+# ルートの登録
+app.include_router(audio.router, prefix="/api/v1")  # これを追加
+
+# ヘルスチェックエンドポイント
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+# ルーターのインポートと登録は後で追加

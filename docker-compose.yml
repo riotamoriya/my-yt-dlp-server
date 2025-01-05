@@ -1,0 +1,11 @@
+services:
+  api:
+    build: .
+    ports:
+      - "7783:7783"  # 8000から7783に変更
+    volumes:
+      - ./app:/app
+    environment:
+      - ENVIRONMENT=development
+      - MAX_FILE_SIZE=100000000  # 100MB
+      - TEMP_DIR=/app/temp
