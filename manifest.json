@@ -1,10 +1,11 @@
 {
   "manifest_version": 2,
-  "name": "YouTube Dark Overlay Button",
+  "name": "YouTube Audio Extractor",
   "version": "1.0",
-  "description": "Add a button under YouTube videos to create a dark overlay",
+  "description": "Extract audio from YouTube videos",
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "<all_urls>"
   ],
   "content_scripts": [
     {
