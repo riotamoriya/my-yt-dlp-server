@@ -71,7 +71,7 @@ function addMp3SaveButton() {
       const videoUrl = window.location.href;
 
       // 音声抽出リクエスト
-      const response = await fetch('http://localhost:7783/api/v1/extract-audio', {
+      const response = await fetch('/api/v1/extract-audio', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -89,23 +89,11 @@ function addMp3SaveButton() {
       // Blobとしてレスポンスを取得
       const blob = await response.blob();
 
-      // ダウンロードリンクを作成
-      const downloadUrl = window.URL.createObjectURL(blob);
-      
-      // デフォルトのファイル名を生成（動画タイトルや現在の日時を使用）
-      const defaultFileName = `youtube-audio-${new Date().toISOString().replace(/[:.]/g, '-')}.mp3`;
-      
-      // ダウンロードリンクを作成
+      // ブラウザのデフォルト保存機能を使用
       const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = defaultFileName;
-      
-      // リンクを非表示で追加し、クリック
-      document.body.appendChild(link);
+      link.href = window.URL.createObjectURL(blob);
+      link.download = ''; // Content-Disposition ヘッダーの値が使用される
       link.click();
-      
-      // リンクを削除
-      document.body.removeChild(link);
 
       // ボタンを通常の状態に戻す
       saveButton.classList.remove('loading');
