@@ -7,3 +7,4 @@ pytest-asyncio==0.23.5
 httpx==0.26.0
 mutagen==1.47.0  # 追加
 requests==2.31.0  # 追加
+Pillow==10.0.0

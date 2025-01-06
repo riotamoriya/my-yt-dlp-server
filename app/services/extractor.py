@@ -5,9 +5,10 @@ import logging
 from typing import Dict
 from fastapi import HTTPException
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, APIC
+from mutagen.id3 import ID3, APIC, error
 import requests
-
+from PIL import Image
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -16,111 +17,119 @@ class AudioExtractor:
         self.temp_dir = "temp"
         os.makedirs(self.temp_dir, exist_ok=True)
         
+        # ydl_optsを一箇所にまとめる
         self.ydl_opts = {
             'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '320',
-            }],
-            'writethumbnail': True,  # サムネイル取得を有効化
-            'outtmpl': f'{self.temp_dir}/%(title)s.%(ext)s',  # タイトルベースのファイル名
+            'postprocessors': [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '320',
+                }
+                # EmbedThumbnailは使わない
+            ],
+            'writethumbnail': True,
+            'outtmpl': f'{self.temp_dir}/%(id)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
         }
 
+    def center_crop_square(self, img: Image.Image) -> Image.Image:
+        """画像を中央から正方形にクロップ"""
+        width, height = img.size
+        if width == height:
+            return img
+        
+        new_size = min(width, height)
+        # 中央を基準にクロップする位置を計算
+        left = (width - new_size) // 2
+        top = (height - new_size) // 2
+        right = left + new_size
+        bottom = top + new_size
+        
+        # クロップを実行
+        logger.info(f"Cropping image from {width}x{height} to {new_size}x{new_size}")
+        return img.crop((left, top, right, bottom))
+    
+    async def extract(self, url: str) -> Dict:
+            """音声を抽出してタグを設定"""
+            try:
+                info = await self._get_video_info(url)
+                if not info:
+                    raise HTTPException(status_code=400, detail="Could not get video information")
 
+                output_file = await self._download_and_convert(url, info['id'])
+                await self._set_media_tags(output_file, info)
+
+                safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                return {
+                    "video_id": info['id'],
+                    "title": info['title'],
+                    "duration": info.get('duration'),
+                    "file_path": output_file,
+                    "filename": f"{safe_title}.mp3"
+                }
+
+            except HTTPException as he:
+                raise he
+            except Exception as e:
+                logger.error(f"Error during extraction: {str(e)}")
+                raise HTTPException(status_code=400, detail=str(e))
+    
+    
 
     async def _set_media_tags(self, file_path: str, info: Dict) -> None:
         """メディアタグを設定"""
         try:
-            # サムネイル画像のURLを取得
-            thumbnail_url = info.get('thumbnail')
-            if not thumbnail_url:
-                logger.warning("No thumbnail URL available.")
-                return
+            thumbnails = [
+                info.get('thumbnail'),
+                next((t['url'] for t in info.get('thumbnails', []) if t.get('url')), None),
+                f"https://i.ytimg.com/vi/{info['id']}/maxresdefault.jpg",
+                f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg"
+            ]
+            
+            thumbnail_url = next((url for url in thumbnails if url), None)
+            logger.info(f"Selected thumbnail URL: {thumbnail_url}")
 
-            # サムネイル画像をダウンロードして保存
-            response = requests.get(thumbnail_url, timeout=10)
-            if response.status_code == 200:
-                thumbnail_path = f"{self.temp_dir}/{info['id']}.jpg"
-                with open(thumbnail_path, "wb") as f:
-                    f.write(response.content)
-            else:
-                logger.warning(f"Failed to fetch thumbnail: {response.status_code}")
-                return
-
-            # サムネイル画像が正常に保存された場合、MP3に埋め込む
-            if os.path.exists(thumbnail_path):
-                audio = ID3(file_path)
-                
-                # サムネイル画像を追加する処理
-                with open(thumbnail_path, "rb") as img_file:
+            if thumbnail_url:
+                response = requests.get(thumbnail_url)
+                if response.status_code == 200:
+                    # 画像をPILで開く
+                    img = Image.open(io.BytesIO(response.content))
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # 画像を正方形にクロップ
+                    img = self.center_crop_square(img)
+                    
+                    # JPEG形式で保存
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=95)
+                    image_data = output.getvalue()
+                    
+                    # ID3タグに画像を追加
+                    audio = ID3(file_path)
+                    audio.delall('APIC')  # 既存の画像を削除
+                    
                     audio.add(APIC(
                         encoding=3,
-                        mime='image/jpeg',  # MIMEタイプを設定
-                        type=3,  # Cover (front)
+                        mime='image/jpeg',
+                        type=3,
                         desc='Cover',
-                        data=img_file.read()  # サムネイル画像のデータを埋め込む
+                        data=image_data
                     ))
-                    audio.save()
+                    audio.save(v2_version=3)
+                    
+                    # 検証
+                    verify_audio = ID3(file_path)
+                    apic_frames = verify_audio.getall('APIC')
+                    logger.info(f"Embedded image size: {len(image_data)} bytes")
+                    logger.info(f"Number of APIC frames: {len(apic_frames)}")
 
-                logger.info("Thumbnail successfully embedded into the MP3 file.")
-            else:
-                logger.warning("Thumbnail file not found in temp directory.")
         except Exception as e:
-            logger.error(f"Error embedding thumbnail: {str(e)}")
-    async def extract(self, url: str) -> Dict:
-        """音声を抽出してタグを設定"""
-        try:
-            # 動画情報を取得
-            info = await self._get_video_info(url)
-            if not info:
-                raise HTTPException(status_code=400, detail="Could not get video information")
-
-            # ファイル名から使用できない文字を除去
-            safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            # output_path = f"{self.temp_dir}/{safe_title}"
-            self.ydl_opts = {
-                'format': 'bestaudio/best',
-                'postprocessors': [
-                    {
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'mp3',
-                        'preferredquality': '320',
-                    },
-                    {
-                        'key': 'EmbedThumbnail',  # サムネイルを埋め込む設定
-                    }
-                ],
-                'writethumbnail': True,  # サムネイルを保存するオプション
-                'outtmpl': f'{self.temp_dir}/%(id)s.%(ext)s',  # 出力パス
-                'quiet': True,
-                'no_warnings': True,
-            }
-
-
-
-            # 音声をダウンロード
-            output_file = await self._download_and_convert(url, info['id'])
-            
-            # メディアタグを設定
-            await self._set_media_tags(output_file, info)
-
-            return {
-                "video_id": info['id'],
-                "title": info['title'],
-                "duration": info.get('duration'),
-                "file_path": output_file,
-                "filename": f"{safe_title}.mp3"
-            }
-
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            logger.error(f"Error during extraction: {str(e)}")
-            raise HTTPException(status_code=400, detail=str(e))
-        
+            logger.error(f"Error setting media tags: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             
     async def _download_and_convert(self, url: str, video_id: str) -> str:
         """動画をダウンロードしMP3に変換"""
