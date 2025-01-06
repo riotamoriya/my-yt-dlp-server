@@ -1,6 +1,7 @@
 services:
   api:
     build: .
+    restart: always
     ports:
       - "7783:7783"  # 8000から7783に変更
     volumes:
