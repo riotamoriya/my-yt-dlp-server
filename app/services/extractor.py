@@ -207,8 +207,13 @@ class AudioExtractor:
             logger.error(f"Error getting video info: {str(e)}")
             raise HTTPException(status_code=400, detail="Could not process video URL")
 
+
+
     def _is_valid_youtube_url(self, url: str) -> bool:
         """YouTubeのURLが有効かチェック"""
         import re
-        youtube_regex = r'^(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/)[a-zA-Z0-9_-]{11}$'
-        return bool(re.match(youtube_regex, url))
+        # URLからビデオIDを直接抽出
+        video_id_pattern = r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})'
+        video_id_match = re.search(video_id_pattern, url)
+        
+        return bool(video_id_match)
