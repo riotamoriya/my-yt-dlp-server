@@ -17,21 +17,19 @@ class AudioExtractor:
         self.temp_dir = "temp"
         os.makedirs(self.temp_dir, exist_ok=True)
         
-        # ydl_optsを一箇所にまとめる
         self.ydl_opts = {
             'format': 'bestaudio/best',
-            'postprocessors': [
-                {
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '320',
-                }
-                # EmbedThumbnailは使わない
-            ],
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '320',
+            }],
             'writethumbnail': True,
             'outtmpl': f'{self.temp_dir}/%(id)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
+            'noplaylist': True,  # この設定を追加
+            'extract_flat': False  # この設定も追加
         }
 
     def center_crop_square(self, img: Image.Image) -> Image.Image:
@@ -192,27 +190,30 @@ class AudioExtractor:
 
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
                 try:
-                    # まずURLから動画IDだけを抽出
-                    video_id = self._extract_video_id(url)
-                    logger.info(f"Extracted video ID: {video_id}")
-
-                    # プレイリストパラメータを除去して単一の動画として情報を取得
-                    clean_url = f"https://www.youtube.com/watch?v={video_id}"
-                    logger.info(f"Using clean URL: {clean_url}")
-
-                    info = await asyncio.to_thread(ydl.extract_info, clean_url, download=False)
+                    # URLの内容をログ出力
+                    logger.info(f"Processing URL: {url}")
+                    
+                    info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                    
+                    # 取得した情報の内容をログ出力
+                    logger.info(f"Retrieved info type: {type(info)}")
+                    logger.info(f"Retrieved info keys: {info.keys() if info else 'None'}")
+                    
                     if not info or 'id' not in info:
                         raise HTTPException(status_code=400, detail="Video not found or not accessible")
-
-                    logger.info(f"Retrieved title: {info.get('title')}")
+                    
+                    # 最終的に使用する情報をログ出力
+                    logger.info(f"Using video ID: {info['id']}")
+                    logger.info(f"Using title: {info.get('title')}")
+                    
                     return info
 
                 except yt_dlp.utils.ExtractorError as e:
+                    logger.error(f"Extractor error: {str(e)}")
                     raise HTTPException(status_code=400, detail=f"Could not extract video info: {str(e)}")
                 except yt_dlp.utils.DownloadError as e:
+                    logger.error(f"Download error: {str(e)}")
                     raise HTTPException(status_code=400, detail=f"Video not available: {str(e)}")
-        except HTTPException:
-            raise
         except Exception as e:
             logger.error(f"Error getting video info: {str(e)}")
             raise HTTPException(status_code=400, detail="Could not process video URL")
