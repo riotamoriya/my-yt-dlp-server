@@ -187,16 +187,26 @@ class AudioExtractor:
     async def _get_video_info(self, url: str) -> Dict:
         """動画の情報を取得"""
         try:
-            # URLの厳密なバリデーション
             if not self._is_valid_youtube_url(url):
                 raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
 
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
                 try:
-                    info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                    # まずURLから動画IDだけを抽出
+                    video_id = self._extract_video_id(url)
+                    logger.info(f"Extracted video ID: {video_id}")
+
+                    # プレイリストパラメータを除去して単一の動画として情報を取得
+                    clean_url = f"https://www.youtube.com/watch?v={video_id}"
+                    logger.info(f"Using clean URL: {clean_url}")
+
+                    info = await asyncio.to_thread(ydl.extract_info, clean_url, download=False)
                     if not info or 'id' not in info:
                         raise HTTPException(status_code=400, detail="Video not found or not accessible")
+
+                    logger.info(f"Retrieved title: {info.get('title')}")
                     return info
+
                 except yt_dlp.utils.ExtractorError as e:
                     raise HTTPException(status_code=400, detail=f"Could not extract video info: {str(e)}")
                 except yt_dlp.utils.DownloadError as e:
@@ -207,6 +217,30 @@ class AudioExtractor:
             logger.error(f"Error getting video info: {str(e)}")
             raise HTTPException(status_code=400, detail="Could not process video URL")
 
+
+    def _extract_video_id(self, url: str) -> str:
+        """URLから動画IDを抽出"""
+        import re
+        import urllib.parse
+
+        # URLをパース
+        parsed_url = urllib.parse.urlparse(url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # 'v' パラメータから動画IDを取得
+        video_id = query_params.get('v', [None])[0]
+        
+        if not video_id:
+            # youtu.be形式の場合
+            if 'youtu.be' in url:
+                video_id = parsed_url.path.strip('/')
+        
+        if not video_id or len(video_id) != 11:
+            logger.error(f"Invalid video ID extracted from URL: {url}")
+            raise HTTPException(status_code=400, detail="Could not extract valid video ID")
+        
+        logger.info(f"Extracted video ID: {video_id}")
+        return video_id
 
 
     def _is_valid_youtube_url(self, url: str) -> bool:
