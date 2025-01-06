@@ -50,6 +50,32 @@ class AudioExtractor:
         # クロップを実行
         logger.info(f"Cropping image from {width}x{height} to {new_size}x{new_size}")
         return img.crop((left, top, right, bottom))
+        
+        
+    async def cleanup_old_files(self, keep_latest: int = 5):
+        """最新のN個以外の一時ファイルを削除"""
+        try:
+            files = []
+            for f in os.listdir(self.temp_dir):
+                path = os.path.join(self.temp_dir, f)
+                if os.path.isfile(path):
+                    files.append((path, os.path.getmtime(path)))
+            
+            # 更新時刻で並べ替え
+            files.sort(key=lambda x: x[1], reverse=True)
+            
+            # 古いファイルを削除
+            for file_path, _ in files[keep_latest:]:
+                try:
+                    os.remove(file_path)
+                    logger.info(f"Cleaned up old file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error deleting file {file_path}: {e}")
+                    
+            return len(files[keep_latest:])  # 削除したファイル数を返す
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            return 0
     
     async def extract(self, url: str) -> Dict:
             """音声を抽出してタグを設定"""
@@ -62,13 +88,21 @@ class AudioExtractor:
                 await self._set_media_tags(output_file, info)
 
                 safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                return {
+                
+                result = {
                     "video_id": info['id'],
                     "title": info['title'],
                     "duration": info.get('duration'),
                     "file_path": output_file,
                     "filename": f"{safe_title}.mp3"
                 }
+                cleaned = await self.cleanup_old_files(keep_latest=5)
+                
+                if cleaned > 0:
+                    logger.info(f"Cleaned up {cleaned} old files")
+                    
+                return result
+                
 
             except HTTPException as he:
                 raise he
