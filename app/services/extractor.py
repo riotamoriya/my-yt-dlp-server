@@ -361,3 +361,60 @@ class AudioExtractor:
         video_id_match = re.search(video_id_pattern, url)
         
         return bool(video_id_match)
+    
+        
+        
+    """プレイリスト機能"""
+    async def is_playlist(self, url: str) -> bool:
+        """URLがプレイリストかどうかを判定"""
+        try:
+            info = await self.get_playlist_info(url)
+            return info.get('_type') == 'playlist'
+        except Exception as e:
+            logger.error(f"Error checking if URL is playlist: {str(e)}")
+            return False
+
+    async def get_playlist_info(self, url: str) -> Dict:
+        """プレイリストの情報を取得"""
+        playlist_opts = {
+            **self.ydl_opts,
+            'extract_flat': True,
+            'noplaylist': False,
+            'quiet': False,  # デバッグのために出力を有効化
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(playlist_opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                logger.info(f"Retrieved info type: {info.get('_type')}")
+                logger.info(f"Retrieved info keys: {info.keys()}")
+
+                # プレイリスト情報の構造を確認
+                if info.get('_type') != 'playlist':
+                    # プレイリストでない場合は単一の動画として扱う
+                    return {
+                        'title': 'Single Video Playlist',
+                        '_type': 'playlist',
+                        'entries': [{
+                            'id': info.get('id'),
+                            'title': info.get('title'),
+                            'url': url
+                        }]
+                    }
+
+                if 'entries' not in info:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Could not retrieve playlist entries"
+                    )
+
+                # エントリーの数をログ
+                logger.info(f"Found {len(info.get('entries', []))} videos in playlist")
+                return info
+
+        except Exception as e:
+            logger.error(f"Error getting playlist info: {str(e)}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Could not get playlist info: {str(e)}"
+            )
