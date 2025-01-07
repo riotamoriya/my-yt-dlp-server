@@ -147,50 +147,79 @@ class AudioExtractor:
             logger.error(f"Error during cleanup: {e}")
             return 0
 
+
+
     async def extract(self, url: str, output_dir: str = None) -> Dict:
         """音声を抽出してタグを設定"""
-        try:
-            info = await self._get_video_info(url)
-            if not info:
-                raise HTTPException(status_code=400, detail="Could not get video information")
+        retry_count = 3  # リトライ回数を設定
+        retry_delay = 2  # リトライ間の待機時間（秒）
 
-            # 保存先ディレクトリを設定
-            original_temp_dir = self.temp_dir
-            if output_dir:
-                self.temp_dir = output_dir
-                logger.info(f"Using custom output directory: {output_dir}")
-
+        for attempt in range(retry_count):
             try:
-                output_file = await self._download_and_convert(url, info['id'])
-                await self._set_media_tags(output_file, info)
+                info = await self._get_video_info(url)
+                if not info:
+                    raise HTTPException(status_code=400, detail="Could not get video information")
 
-                safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                result = {
-                    "video_id": info['id'],
-                    "title": info['title'],
-                    "duration": info.get('duration'),
-                    "file_path": output_file,
-                    "filename": f"{safe_title}.mp3"
-                }
-
-                # プレイリスト処理時はクリーンアップしない
-                if not output_dir:
-                    cleaned = await self.cleanup_old_files(keep_latest=5)
-                    if cleaned > 0:
-                        logger.info(f"Cleaned up {cleaned} old files")
-
-                return result
-
-            finally:
-                # 元のtemp_dirを復元
+                # 保存先ディレクトリを設定
+                original_temp_dir = self.temp_dir
                 if output_dir:
-                    self.temp_dir = original_temp_dir
+                    self.temp_dir = output_dir
+                    logger.info(f"Using custom output directory: {output_dir}")
 
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            logger.error(f"Error during extraction: {str(e)}")
-            raise HTTPException(status_code=400, detail=str(e))
+                try:
+                    output_file = await self._download_and_convert(url, info['id'])
+                    
+                    # ファイルの存在確認
+                    if not os.path.exists(output_file):
+                        raise Exception(f"File was not saved properly: {output_file}")
+                    
+                    # ファイルサイズの確認
+                    file_size = os.path.getsize(output_file)
+                    if file_size == 0:
+                        raise Exception(f"File is empty: {output_file}")
+
+                    await self._set_media_tags(output_file, info)
+                    safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    
+                    # MP3ファイルとして正しく保存されているか確認
+                    try:
+                        audio = ID3(output_file)
+                        logger.info(f"Successfully verified MP3 file: {safe_title}")
+                    except Exception as e:
+                        raise Exception(f"Invalid MP3 file: {str(e)}")
+
+                    result = {
+                        "video_id": info['id'],
+                        "title": info['title'],
+                        "duration": info.get('duration'),
+                        "file_path": output_file,
+                        "filename": f"{safe_title}.mp3"
+                    }
+
+                    # プレイリスト処理時はクリーンアップしない
+                    if not output_dir:
+                        cleaned = await self.cleanup_old_files(keep_latest=5)
+                        if cleaned > 0:
+                            logger.info(f"Cleaned up {cleaned} old files")
+
+                    return result
+
+                finally:
+                    # 元のtemp_dirを復元
+                    if output_dir:
+                        self.temp_dir = original_temp_dir
+
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1}/{retry_count} failed: {str(e)}")
+                if attempt < retry_count - 1:  # 最後の試行でなければ
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)  # 次の試行前に待機
+                else:  # 最後の試行で失敗した場合
+                    if isinstance(e, HTTPException):
+                        raise
+                    raise HTTPException(status_code=400, detail=str(e))
+
+
 
     async def _set_media_tags(self, file_path: str, info: Dict) -> None:
         """メディアタグを設定"""
@@ -333,11 +362,31 @@ class AudioExtractor:
     def _is_valid_youtube_url(self, url: str) -> bool:
         """YouTubeのURLが有効かチェック"""
         import re
-        # URLからビデオIDを直接抽出
-        video_id_pattern = r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})'
-        video_id_match = re.search(video_id_pattern, url)
+        import urllib.parse
         
-        return bool(video_id_match)
+        try:
+            parsed_url = urllib.parse.urlparse(url)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            
+            # 通常の動画ID
+            video_id = query_params.get('v', [None])[0]
+            if not video_id:
+                # youtu.be形式の確認
+                video_id = parsed_url.path.strip('/')
+            
+            # Radio/Mixリストの場合は特別な処理
+            if 'start_radio' in query_params:
+                logger.info("Detected Radio/Mix playlist")
+                # 最初の動画のみを処理
+                return bool(video_id and len(video_id) == 11)
+                
+            return bool(video_id and len(video_id) == 11)
+            
+        except Exception as e:
+            logger.error(f"Error parsing URL: {str(e)}")
+            return False
+        
+        
         
         
     async def get_playlist_info(self, url: str) -> Dict:

@@ -9,6 +9,7 @@ import os
 import zipfile
 from fastapi import BackgroundTasks
 import shutil
+from mutagen.id3 import ID3
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -99,10 +100,19 @@ async def extract_album(request: AudioExtractionRequest):
             zip_path = f"{album_dir}.zip"
             with zipfile.ZipFile(zip_path, 'w') as zipf:
                 for file in os.listdir(album_dir):
-                    # MP3ファイルのみを追加
-                    if file.endswith('.mp3'):  # この条件を追加
+                    if file.endswith('.mp3'):
                         file_path = os.path.join(album_dir, file)
-                        archive_path = os.path.join(safe_album_title, file)
+                        # ファイル名を曲名に変更
+                        try:
+                            audio = ID3(file_path)
+                            title = audio.get('TIT2', ['Unknown Title'])[0]
+                            # 安全なファイル名に変換
+                            safe_title = "".join(c for c in str(title) if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                            archive_path = os.path.join(safe_album_title, f"{safe_title}.mp3")
+                        except:
+                            # タグ取得に失敗した場合は元のファイル名を使用
+                            archive_path = os.path.join(safe_album_title, file)
+                        
                         logger.info(f"Adding to ZIP: {file_path} as {archive_path}")
                         zipf.write(file_path, archive_path)
                         
