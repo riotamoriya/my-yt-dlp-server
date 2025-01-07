@@ -10,3 +10,5 @@ services:
       - ENVIRONMENT=development
       - MAX_FILE_SIZE=100000000  # 100MB
       - TEMP_DIR=/app/temp
+
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7783", "--timeout-keep-alive", "6000"]

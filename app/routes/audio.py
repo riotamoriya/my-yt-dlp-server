@@ -1,11 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
 from services.extractor import AudioExtractor
 from utils.file_handler import cleanup_temp_file
 import logging
-from urllib.parse import quote  # これを追加
-
+from urllib.parse import quote, urlparse, parse_qs
+import os
+import zipfile
+from fastapi import BackgroundTasks
+import shutil
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,3 +46,103 @@ async def extract_audio(request: AudioExtractionRequest):
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+
+
+@router.post("/extract-album")
+async def extract_album(request: AudioExtractionRequest):
+    try:
+        parsed_url = urlparse(str(request.url))
+        query_params = parse_qs(parsed_url.query)
+        playlist_id = query_params.get('list', [None])[0]
+
+        if playlist_id:
+            playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+            logger.info(f"Found playlist URL: {playlist_url}")
+
+            extractor = AudioExtractor()
+            playlist_info = await extractor.get_playlist_info(playlist_url)
+            
+            # アルバムディレクトリの作成
+            album_title = playlist_info.get('title', 'Unknown_Album')
+            safe_album_title = "".join(c for c in album_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            album_dir = os.path.join(extractor.temp_dir, safe_album_title)
+            os.makedirs(album_dir, exist_ok=True)
+            logger.info(f"Created album directory: {album_dir}")
+
+            total_videos = len(playlist_info.get('entries', []))
+            logger.info(f"Processing {total_videos} videos for album: {album_title}")
+
+            # ファイルの保存を確認するためのログを追加
+            saved_files = []
+
+            # 各動画を処理
+            for i, entry in enumerate(playlist_info.get('entries', []), 1):
+                video_id = entry.get('id')
+                if video_id:
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+                    try:
+                        # album_dir を渡して、そこにファイルを保存
+                        result = await extractor.extract(video_url, output_dir=album_dir)
+                        saved_files.append(result["file_path"])
+                        logger.info(f"Saved file: {result['file_path']}")
+                    except Exception as e:
+                        logger.error(f"Error processing video {video_id}: {str(e)}")
+
+            # 保存されたファイルの確認
+            files_in_dir = os.listdir(album_dir)
+            logger.info(f"Files in album directory before ZIP: {files_in_dir}")
+
+
+            # ZIPファイルの作成
+            zip_path = f"{album_dir}.zip"
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                for file in os.listdir(album_dir):
+                    # MP3ファイルのみを追加
+                    if file.endswith('.mp3'):  # この条件を追加
+                        file_path = os.path.join(album_dir, file)
+                        archive_path = os.path.join(safe_album_title, file)
+                        logger.info(f"Adding to ZIP: {file_path} as {archive_path}")
+                        zipf.write(file_path, archive_path)
+                        
+
+            # ZIP後の確認
+            if os.path.exists(zip_path):
+                zip_size = os.path.getsize(zip_path)
+                logger.info(f"Created ZIP file: {zip_path}, size: {zip_size} bytes")
+                
+                # ファイルを読み込んでからクリーンアップ
+                with open(zip_path, 'rb') as f:
+                    content = f.read()
+
+                # クリーンアップ
+                shutil.rmtree(album_dir, ignore_errors=True)
+                os.remove(zip_path)
+
+                # バイナリレスポンスを返す
+                return Response(
+                    content=content,
+                    media_type='application/zip',
+                    headers={
+                        'Content-Disposition': f'attachment; filename="{safe_album_title}.zip"'
+                    }
+                )
+
+        else:
+            logger.info("No playlist found in URL")
+            return {"message": "No playlist found in URL"}
+
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    
+async def cleanup_album_files(zip_path: str, album_dir: str):
+    """アルバムの一時ファイルをクリーンアップする"""
+    try:
+        await cleanup_temp_file(zip_path)  # awaitを追加
+        import shutil
+        shutil.rmtree(album_dir)
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")

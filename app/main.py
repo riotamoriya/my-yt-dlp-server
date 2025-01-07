@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
 from routes import audio  # 相対インポートを絶対インポートに変更
-
+import uvicorn
 
 # ロギングの設定
 logging.basicConfig(
@@ -41,3 +41,13 @@ async def health_check():
     return {"status": "healthy"}
 
 # ルーターのインポートと登録は後で追加
+
+
+# タイムアウト設定の追加
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=7783,
+        timeout_keep_alive=6000,  # 10分
+    )

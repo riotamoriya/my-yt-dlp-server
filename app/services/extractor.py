@@ -13,8 +13,6 @@ import io
 logger = logging.getLogger(__name__)
 
 class AudioExtractor:
-
-
     def __init__(self):
         self.temp_dir = "temp"
         os.makedirs(self.temp_dir, exist_ok=True)
@@ -70,7 +68,14 @@ class AudioExtractor:
                             'playlist_id': playlist_info.get('id'),
                         }
                         logger.info(f"Found playlist info: {playlist_data}")
-
+                        logger.info("===================================")
+                        logger.info(playlist_info)
+                        
+                        logger.info("===================================")
+                        
+                        
+                    
+                    
                     # 単一動画の情報を取得
                     with yt_dlp.YoutubeDL(video_opts) as video_ydl:
                         video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -141,19 +146,25 @@ class AudioExtractor:
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
             return 0
-    
-    async def extract(self, url: str) -> Dict:
-            """音声を抽出してタグを設定"""
-            try:
-                info = await self._get_video_info(url)
-                if not info:
-                    raise HTTPException(status_code=400, detail="Could not get video information")
 
+    async def extract(self, url: str, output_dir: str = None) -> Dict:
+        """音声を抽出してタグを設定"""
+        try:
+            info = await self._get_video_info(url)
+            if not info:
+                raise HTTPException(status_code=400, detail="Could not get video information")
+
+            # 保存先ディレクトリを設定
+            original_temp_dir = self.temp_dir
+            if output_dir:
+                self.temp_dir = output_dir
+                logger.info(f"Using custom output directory: {output_dir}")
+
+            try:
                 output_file = await self._download_and_convert(url, info['id'])
                 await self._set_media_tags(output_file, info)
 
                 safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                
                 result = {
                     "video_id": info['id'],
                     "title": info['title'],
@@ -161,21 +172,25 @@ class AudioExtractor:
                     "file_path": output_file,
                     "filename": f"{safe_title}.mp3"
                 }
-                cleaned = await self.cleanup_old_files(keep_latest=5)
-                
-                if cleaned > 0:
-                    logger.info(f"Cleaned up {cleaned} old files")
-                    
-                return result
-                
 
-            except HTTPException as he:
-                raise he
-            except Exception as e:
-                logger.error(f"Error during extraction: {str(e)}")
-                raise HTTPException(status_code=400, detail=str(e))
-    
-    
+                # プレイリスト処理時はクリーンアップしない
+                if not output_dir:
+                    cleaned = await self.cleanup_old_files(keep_latest=5)
+                    if cleaned > 0:
+                        logger.info(f"Cleaned up {cleaned} old files")
+
+                return result
+
+            finally:
+                # 元のtemp_dirを復元
+                if output_dir:
+                    self.temp_dir = original_temp_dir
+
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            logger.error(f"Error during extraction: {str(e)}")
+            raise HTTPException(status_code=400, detail=str(e))
 
     async def _set_media_tags(self, file_path: str, info: Dict) -> None:
         """メディアタグを設定"""
@@ -252,74 +267,38 @@ class AudioExtractor:
             import traceback
             logger.error(traceback.format_exc())
             
-            
-            
+                
     async def _download_and_convert(self, url: str, video_id: str) -> str:
         """動画をダウンロードしMP3に変換"""
         try:
-            # プレイリストの場合でも動画を直接ダウンロードするための設定
-            download_opts = {
+            # 出力ディレクトリが存在することを確認
+            os.makedirs(self.temp_dir, exist_ok=True)
+            
+            # yt-dlpのオプションを更新
+            current_opts = self.ydl_opts.copy()
+            current_opts.update({
+                'outtmpl': os.path.join(self.temp_dir, '%(id)s.%(ext)s'),
                 'format': 'bestaudio/best',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '320',
                 }],
-                'writethumbnail': True,
-                'outtmpl': f'{self.temp_dir}/%(id)s.%(ext)s',
-                'quiet': False,  # デバッグのために出力を有効化
-                'no_warnings': False,  # 警告も表示
-                'noplaylist': True,  # プレイリストを無視
-            }
+            })
 
-            logger.info(f"Starting download for video ID: {video_id}")
-            logger.info(f"Original URL: {url}")
+            logger.info(f"Downloading to directory: {self.temp_dir}")
             
-            # 直接動画URLを構築
-            single_video_url = f"https://www.youtube.com/watch?v={video_id}"
-            logger.info(f"Using direct video URL: {single_video_url}")
-
-            try:
-                with yt_dlp.YoutubeDL(download_opts) as ydl:
-                    # ダウンロード前の情報を取得
-                    info = await asyncio.to_thread(ydl.extract_info, single_video_url, download=False)
-                    logger.info(f"Pre-download info: {info.get('title') if info else 'No info'}")
-                    
-                    # ダウンロードを実行
-                    await asyncio.to_thread(ydl.download, [single_video_url])
-                    logger.info("Download completed successfully")
-
-            except Exception as e:
-                logger.error(f"Download error: {str(e)}")
-                raise
-
-            # ファイル確認
-            all_files = os.listdir(self.temp_dir)
-            logger.info(f"All files in temp directory: {all_files}")
-            
-            mp3_files = [f for f in all_files if f.endswith('.mp3')]
-            logger.info(f"Found MP3 files: {mp3_files}")
-
-            if not mp3_files:
-                logger.error("No MP3 files found after conversion")
-                raise HTTPException(status_code=400, detail="File conversion failed")
-
-            target_mp3 = f"{video_id}.mp3"
-            if target_mp3 in mp3_files:
-                output_path = os.path.join(self.temp_dir, target_mp3)
-            else:
-                output_path = os.path.join(self.temp_dir, mp3_files[0])
+            with yt_dlp.YoutubeDL(current_opts) as ydl:
+                await asyncio.to_thread(ydl.download, [url])
                 
-            logger.info(f"Final output path: {output_path}")
-            
-            if not os.path.exists(output_path):
-                logger.error(f"Output file does not exist: {output_path}")
-                raise HTTPException(status_code=400, detail="File not found after conversion")
+            # 出力ファイルのパスを構築
+            output_file = os.path.join(self.temp_dir, f"{video_id}.mp3")
+            if not os.path.exists(output_file):
+                raise HTTPException(status_code=400, detail="File conversion failed")
+                    
+            logger.info(f"Successfully downloaded and converted: {output_file}")
+            return output_file
 
-            return output_path
-
-        except HTTPException as he:
-            raise he
         except Exception as e:
             logger.error(f"Error in download_and_convert: {str(e)}")
             logger.error(f"Error type: {type(e)}")
@@ -327,10 +306,8 @@ class AudioExtractor:
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=400, detail="Download or conversion failed")
 
-
     def _extract_video_id(self, url: str) -> str:
         """URLから動画IDを抽出"""
-        import re
         import urllib.parse
 
         # URLをパース
@@ -361,3 +338,21 @@ class AudioExtractor:
         video_id_match = re.search(video_id_pattern, url)
         
         return bool(video_id_match)
+        
+        
+    async def get_playlist_info(self, url: str) -> Dict:
+        """プレイリストの情報を取得"""
+        playlist_opts = {
+            **self.ydl_opts,
+            'extract_flat': True,  # プレイリスト情報のみを取得
+            'noplaylist': False    # プレイリストを許可
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(playlist_opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                logger.info(f"Retrieved playlist info with {len(info.get('entries', []))} videos")
+                return info
+        except Exception as e:
+            logger.error(f"Error getting playlist info: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Could not get playlist info: {str(e)}")
