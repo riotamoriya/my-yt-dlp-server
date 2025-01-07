@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "name": "YouTube Audio Extractor",
+  "name": "use localhost:7783",
   "version": "1.0",
-  "description": "Extract audio from YouTube videos",
+  "description": "use localhost:7783",
   "permissions": [
     "activeTab",
     "<all_urls>"

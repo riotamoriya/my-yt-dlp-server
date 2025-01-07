@@ -33,6 +33,16 @@ function addMp3SaveButton() {
   saveButton.textContent = 'MP3を保存';
   saveButton.classList.add('mp3-save-btn');
 
+  // 新しいボタンを作成
+  const saveButton2 = document.createElement('button');
+  saveButton2.id = 'mp3-save-button-2'; // 新しいボタンのID
+  saveButton2.textContent = 'プレイリストの全ての曲を保存'; // 同じテキスト
+  saveButton2.classList.add('mp3-save-btn');
+
+  // 新しいボタンのスタイルを青に設定
+  saveButton2.style.backgroundColor = '#007BFF'; // 青色
+  saveButton2.style.color = 'white'; // テキスト色を白に
+
   // スタイル設定（既存のまま）
   const style = document.createElement('style');
   style.textContent = `
@@ -80,6 +90,7 @@ function addMp3SaveButton() {
 
   // ボタンをアクションセクションに追加
   actionSection.appendChild(saveButton);
+  actionSection.appendChild(saveButton2); // 新しいボタンを追加
   actionSection.appendChild(style);
 
   // 単一のイベントリスナー
@@ -126,6 +137,58 @@ function addMp3SaveButton() {
     } catch (error) {
       saveButton.classList.remove('loading');
       saveButton.textContent = 'MP3を保存';
+      console.error('音声抽出エラー:', error);
+      alert(`エラーが発生しました: ${error.message}`);
+    }
+  });
+
+
+
+
+  // 新しいボタンにも同じイベントリスナーを追加
+  saveButton2.addEventListener('click', async () => {
+    try {
+      saveButton2.classList.add('loading');
+      saveButton2.textContent = 'ダウンロード中...';
+
+      const videoUrl = window.location.href;
+      const response = await fetch('http://localhost:7783/api/v1/extract-album', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': '*/*'
+        },
+        body: JSON.stringify({ url: videoUrl })
+    });
+    
+    // レスポンスヘッダーをログ出力
+    console.log('Response headers:', response.headers);
+    console.log('Content-Disposition:', response.headers.get('content-disposition'));
+
+
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '音声抽出に失敗しました');
+      }
+
+      const blob = await response.blob();
+      const filename = getFilenameFromResponse(response);
+      console.log('Using filename:', filename); // デバッグ用
+
+      const link = document.createElement('a');
+      link.href = window.URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+
+      window.URL.revokeObjectURL(link.href);
+
+      saveButton2.classList.remove('loading');
+      saveButton2.textContent = 'プレイリストの全ての曲を保存';
+      alert('プレイリストの全ての曲を保存が保存されました');
+    } catch (error) {
+      saveButton2.classList.remove('loading');
+      saveButton2.textContent = 'プレイリストの全ての曲を保存';
       console.error('音声抽出エラー:', error);
       alert(`エラーが発生しました: ${error.message}`);
     }
