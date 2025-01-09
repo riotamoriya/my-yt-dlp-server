@@ -1,216 +1,342 @@
-function addMp3SaveButton() {
-  // 既に追加されていないか確認
-  const existingButton = document.getElementById('mp3-save-button');
-  if (existingButton) return;
+// content.js
+/*
+ * YouTube MP3ダウンローダー Content Script
+ * 
+ * 設計思想：
+ * - YouTube動画/プレイリストページおよび検索結果ページにMP3ダウンロードボタンを追加するContent Script
+ * - シンプルで保守性の高いクラスベースのアーキテクチャを採用
+ * - 各クラスは単一責任の原則に従い、明確な役割を持つ
+ * 
+ * 主要コンポーネント：
+ * - Config: 設定値の集約による保守性の向上
+ * - FileUtils: ファイル操作に関する共通処理
+ * - AudioExtractorService: APIとの通信を担当
+ * - DownloadManager: ダウンロード処理の統合管理
+ * - MP3ButtonManager: UIコンポーネントとユーザーインタラクションの管理
+ * - SearchResultsButtonManager: 検索結果ページのボタン管理
+ * 
+ * 拡張性：
+ * - 新機能の追加が容易な構造
+ * - APIエンドポイントの追加や変更が設定で完結
+ * - UI要素の追加や変更が分離された形で可能
+ */
 
-  console.log('Adding MP3 save button');
+// 設定の名前空間
+const Config = {
+  API: {
+    BASE_URL: 'http://localhost:7783/api/v1',
+    ENDPOINTS: {
+      EXTRACT_AUDIO: '/extract-audio',
+      EXTRACT_ALBUM: '/extract-album'
+    }
+  },
+  UI: {
+    BUTTON_STYLES: `
+      .mp3-save-btn {
+        display: block;
+        margin: 10px auto;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+        color: white;
+      }
+      .mp3-save-btn:hover {
+        filter: brightness(0.95);
+      }
+      .mp3-save-btn.loading {
+        background-color: #ccc;
+        cursor: wait;
+      }
+      .mp3-save-btn-search {
+        display: inline-block;
+        margin: 5px 0;
+        padding: 8px 16px;
+        font-size: 0.9em;
+      }
+    `,
+    CONTAINER_SELECTORS: [
+      'div#actions.ytd-video-primary-info-renderer',
+      'div#actions-inner',
+      'ytd-video-primary-info-renderer #actions',
+      '#top-row.ytd-video-primary-info-renderer'
+    ],
+    SEARCH_RESULT_SELECTORS: {
+      VIDEO_ITEMS: 'ytd-video-renderer',
+      BUTTON_CONTAINER: '#meta',
+      METADATA_CONTAINER: '#metadata-line'
+    }
+  }
+};
 
-  // ファイル名を取得する関数
-  function getFilenameFromResponse(response) {
+// ユーティリティクラス
+class FileUtils {
+  static getFilenameFromResponse(response) {
     const disposition = response.headers.get('content-disposition');
-    console.log('Content-Disposition:', disposition); // デバッグ用
+    if (!disposition) return 'downloaded.mp3';
 
-    if (disposition && disposition.includes('filename=')) {
-      let filename = '';
-      const matches = /filename\*=UTF-8''(.+)/.exec(disposition);
-      if (matches && matches[1]) {
-        filename = decodeURIComponent(matches[1]);
-      } else {
-        const matches = /filename="(.+)"/.exec(disposition);
-        if (matches && matches[1]) {
-          filename = matches[1];
-        }
-      }
-      console.log('Extracted filename:', filename); // デバッグ用
-      return filename || 'downloaded.mp3';
+    const utf8Match = /filename\*=UTF-8''(.+)/.exec(disposition);
+    if (utf8Match?.[1]) {
+      return decodeURIComponent(utf8Match[1]);
     }
-    return 'downloaded.mp3';
+
+    const standardMatch = /filename="(.+)"/.exec(disposition);
+    return standardMatch?.[1] || 'downloaded.mp3';
   }
 
-  // ボタン要素を作成
-  const saveButton = document.createElement('button');
-  saveButton.id = 'mp3-save-button';
-  saveButton.textContent = 'MP3を保存';
-  saveButton.classList.add('mp3-save-btn');
-
-  // 新しいボタンを作成
-  const saveButton2 = document.createElement('button');
-  saveButton2.id = 'mp3-save-button-2'; // 新しいボタンのID
-  saveButton2.textContent = 'プレイリストの全ての曲を保存'; // 同じテキスト
-  saveButton2.classList.add('mp3-save-btn');
-
-  // 新しいボタンのスタイルを青に設定
-  saveButton2.style.backgroundColor = '#007BFF'; // 青色
-  saveButton2.style.color = 'white'; // テキスト色を白に
-
-  // スタイル設定（既存のまま）
-  const style = document.createElement('style');
-  style.textContent = `
-    .mp3-save-btn {
-      display: block;
-      margin: 10px auto;
-      padding: 10px 20px;
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: background-color 0.3s ease;
-    }
-    .mp3-save-btn:hover {
-      background-color: #45a049;
-    }
-    .mp3-save-btn.loading {
-      background-color: #ccc;
-      cursor: wait;
-    }
-  `;
-
-  // コンテナ検索（既存のまま）
-  const possibleContainers = [
-    'div#actions.ytd-video-primary-info-renderer',
-    'div#actions-inner',
-    'ytd-video-primary-info-renderer #actions',
-    '#top-row.ytd-video-primary-info-renderer'
-  ];
-
-  let actionSection = null;
-  for (const selector of possibleContainers) {
-    actionSection = document.querySelector(selector);
-    if (actionSection) {
-      console.log('Found container with selector:', selector);
-      break;
-    }
-  }
-  
-  if (!actionSection) {
-    console.log('Could not find action section');
-    return;
+  static async downloadBlob(blob, filename) {
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    window.URL.revokeObjectURL(link.href);
   }
 
-  // ボタンをアクションセクションに追加
-  actionSection.appendChild(saveButton);
-  actionSection.appendChild(saveButton2); // 新しいボタンを追加
-  actionSection.appendChild(style);
-
-  // 単一のイベントリスナー
-  saveButton.addEventListener('click', async () => {
-    try {
-      saveButton.classList.add('loading');
-      saveButton.textContent = 'ダウンロード中...';
-
-      const videoUrl = window.location.href;
-      const response = await fetch('http://localhost:7783/api/v1/extract-audio', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': '*/*'
-        },
-        body: JSON.stringify({ url: videoUrl })
-    });
+  static getVideoIdFromElement(element) {
+    const videoLink = element.querySelector('a#video-title');
+    if (!videoLink) return null;
     
-    // レスポンスヘッダーをログ出力
-    console.log('Response headers:', response.headers);
-    console.log('Content-Disposition:', response.headers.get('content-disposition'));
-
-
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '音声抽出に失敗しました');
-      }
-
-      const blob = await response.blob();
-      const filename = getFilenameFromResponse(response);
-      console.log('Using filename:', filename); // デバッグ用
-
-      const link = document.createElement('a');
-      link.href = window.URL.createObjectURL(blob);
-      link.download = filename;
-      link.click();
-
-      window.URL.revokeObjectURL(link.href);
-
-      saveButton.classList.remove('loading');
-      saveButton.textContent = 'MP3を保存';
-      alert('MP3ファイルが保存されました');
-    } catch (error) {
-      saveButton.classList.remove('loading');
-      saveButton.textContent = 'MP3を保存';
-      console.error('音声抽出エラー:', error);
-      alert(`エラーが発生しました: ${error.message}`);
-    }
-  });
-
-
-
-
-  // 新しいボタンにも同じイベントリスナーを追加
-  saveButton2.addEventListener('click', async () => {
-    try {
-      saveButton2.classList.add('loading');
-      saveButton2.textContent = 'ダウンロード中...';
-
-      const videoUrl = window.location.href;
-      const response = await fetch('http://localhost:7783/api/v1/extract-album', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': '*/*'
-        },
-        body: JSON.stringify({ url: videoUrl })
-    });
-    
-    // レスポンスヘッダーをログ出力
-    console.log('Response headers:', response.headers);
-    console.log('Content-Disposition:', response.headers.get('content-disposition'));
-
-
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '音声抽出に失敗しました');
-      }
-
-      const blob = await response.blob();
-      const filename = getFilenameFromResponse(response);
-      console.log('Using filename:', filename); // デバッグ用
-
-      const link = document.createElement('a');
-      link.href = window.URL.createObjectURL(blob);
-      link.download = filename;
-      link.click();
-
-      window.URL.revokeObjectURL(link.href);
-
-      saveButton2.classList.remove('loading');
-      saveButton2.textContent = 'プレイリストの全ての曲を保存';
-      alert('プレイリストの全ての曲を保存が保存されました');
-    } catch (error) {
-      saveButton2.classList.remove('loading');
-      saveButton2.textContent = 'プレイリストの全ての曲を保存';
-      console.error('音声抽出エラー:', error);
-      alert(`エラーが発生しました: ${error.message}`);
-    }
-  });
+    const href = videoLink.href;
+    const match = href.match(/[?&]v=([^&]+)/);
+    return match ? match[1] : null;
+  }
 }
 
-// 既存の初期化コード
-addMp3SaveButton();
+// APIサービスクラス
+class AudioExtractorService {
+  async extractAudio(url, endpoint) {
+    const response = await fetch(`${Config.API.BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': '*/*'
+      },
+      body: JSON.stringify({ url })
+    });
 
-const observer = new MutationObserver((mutations) => {
-  mutations.forEach((mutation) => {
-    if (mutation.type === 'childList') {
-      if (!document.getElementById('mp3-save-button')) {
-        addMp3SaveButton();
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || '音声抽出に失敗しました');
+    }
+
+    return response;
+  }
+}
+
+// ダウンロード管理クラス
+class DownloadManager {
+  constructor() {
+    this.service = new AudioExtractorService();
+  }
+
+  async handleDownload(button, endpoint, successMessage, videoId = null) {
+    const originalText = button.textContent;
+    try {
+      button.classList.add('loading');
+      button.textContent = 'ダウンロード中...';
+
+      const url = videoId 
+        ? `https://www.youtube.com/watch?v=${videoId}`
+        : window.location.href;
+
+      const response = await this.service.extractAudio(
+        url,
+        endpoint
+      );
+
+      const blob = await response.blob();
+      const filename = FileUtils.getFilenameFromResponse(response);
+      await FileUtils.downloadBlob(blob, filename);
+
+      alert(successMessage);
+    } catch (error) {
+      console.error('音声抽出エラー:', error);
+      alert(`エラーが発生しました: ${error.message}`);
+    } finally {
+      button.classList.remove('loading');
+      button.textContent = originalText;
+    }
+  }
+}
+
+// 検索結果ページのボタン管理クラス
+class SearchResultsButtonManager {
+  constructor() {
+    this.downloadManager = new DownloadManager();
+  }
+
+  createSearchResultButton(videoId) {
+    const button = document.createElement('button');
+    button.textContent = 'MP3を保存';
+    button.classList.add('mp3-save-btn', 'mp3-save-btn-search');
+    button.style.backgroundColor = '#4CAF50';
+    
+    button.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.downloadManager.handleDownload(
+        button,
+        Config.API.ENDPOINTS.EXTRACT_AUDIO,
+        'MP3ファイルが保存されました',
+        videoId
+      );
+    });
+
+    return button;
+  }
+
+  addButtonToSearchResult(videoElement) {
+    // 既にボタンが追加されているか確認
+    if (videoElement.querySelector('.mp3-save-btn')) {
+      return;
+    }
+
+    const videoId = FileUtils.getVideoIdFromElement(videoElement);
+    if (!videoId) {
+      return;
+    }
+
+    const metadataContainer = videoElement.querySelector(
+      Config.UI.SEARCH_RESULT_SELECTORS.METADATA_CONTAINER
+    );
+    if (!metadataContainer) {
+      return;
+    }
+
+    const button = this.createSearchResultButton(videoId);
+    metadataContainer.appendChild(button);
+  }
+
+  processSearchResults() {
+    const videoItems = document.querySelectorAll(
+      Config.UI.SEARCH_RESULT_SELECTORS.VIDEO_ITEMS
+    );
+    videoItems.forEach(item => this.addButtonToSearchResult(item));
+  }
+}
+
+// メインの機能を管理するクラス
+class MP3ButtonManager {
+  constructor() {
+    this.downloadManager = new DownloadManager();
+  }
+
+  createButton(id, text, backgroundColor) {
+    const button = document.createElement('button');
+    button.id = id;
+    button.textContent = text;
+    button.classList.add('mp3-save-btn');
+    if (backgroundColor) {
+      button.style.backgroundColor = backgroundColor;
+    }
+    return button;
+  }
+
+  addStyles() {
+    const existingStyle = document.getElementById('mp3-button-styles');
+    if (!existingStyle) {
+      const style = document.createElement('style');
+      style.id = 'mp3-button-styles';
+      style.textContent = Config.UI.BUTTON_STYLES;
+      document.head.appendChild(style);
+    }
+  }
+
+  findContainer() {
+    for (const selector of Config.UI.CONTAINER_SELECTORS) {
+      const container = document.querySelector(selector);
+      if (container) {
+        return container;
       }
     }
-  });
+    return null;
+  }
+
+  initialize() {
+    // 既に追加されているか確認
+    if (document.getElementById('mp3-save-button')) {
+      return;
+    }
+
+    const container = this.findContainer();
+    if (!container) {
+      return;
+    }
+
+    this.addStyles();
+
+    // 単曲ダウンロードボタン
+    const singleButton = this.createButton(
+      'mp3-save-button',
+      'MP3を保存',
+      '#4CAF50'
+    );
+    singleButton.addEventListener('click', () =>
+      this.downloadManager.handleDownload(
+        singleButton,
+        Config.API.ENDPOINTS.EXTRACT_AUDIO,
+        'MP3ファイルが保存されました'
+      )
+    );
+
+    // プレイリストダウンロードボタン
+    const playlistButton = this.createButton(
+      'mp3-save-button-2',
+      'プレイリストの全ての曲を保存',
+      '#007BFF'
+    );
+    playlistButton.addEventListener('click', () =>
+      this.downloadManager.handleDownload(
+        playlistButton,
+        Config.API.ENDPOINTS.EXTRACT_ALBUM,
+        'プレイリストの全ての曲が保存されました'
+      )
+    );
+
+    container.appendChild(singleButton);
+    container.appendChild(playlistButton);
+  }
+}
+
+// メイン処理
+const buttonManager = new MP3ButtonManager();
+const searchResultsManager = new SearchResultsButtonManager();
+
+function initializeButtons() {
+  buttonManager.addStyles();
+  
+  // 現在のページURLをチェック
+  const isSearchPage = window.location.pathname === '/results';
+  
+  if (isSearchPage) {
+    searchResultsManager.processSearchResults();
+  } else {
+    buttonManager.initialize();
+  }
+}
+
+// 初期化処理の実行
+initializeButtons();
+
+// DOMの変更を監視
+const observer = new MutationObserver((mutations) => {
+  const isSearchPage = window.location.pathname === '/results';
+  
+  if (isSearchPage) {
+    searchResultsManager.processSearchResults();
+  } else {
+    if (!document.getElementById('mp3-save-button')) {
+      buttonManager.initialize();
+    }
+  }
 });
 
+// オブザーバーの設定
 observer.observe(document.body, {
   childList: true,
   subtree: true
 });
 
-setTimeout(addMp3SaveButton, 1000);
+// 遅延実行による初期化
+setTimeout(() => initializeButtons(), 1000);
