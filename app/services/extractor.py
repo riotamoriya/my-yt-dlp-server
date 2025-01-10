@@ -295,7 +295,6 @@ class AudioExtractor:
             logger.error(f"Error setting media tags: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-            
                 
     async def _download_and_convert(self, url: str, video_id: str) -> str:
         """動画をダウンロードしMP3に変換"""
@@ -313,19 +312,33 @@ class AudioExtractor:
                     'preferredcodec': 'mp3',
                     'preferredquality': '320',
                 }],
+                'verbose': True,  # 詳細なログを有効化
             })
 
             logger.info(f"Downloading to directory: {self.temp_dir}")
             
             with yt_dlp.YoutubeDL(current_opts) as ydl:
-                await asyncio.to_thread(ydl.download, [url])
+                try:
+                    await asyncio.to_thread(ydl.download, [url])
+                except Exception as ydl_error:
+                    logger.error(f"YouTube-DL error details: {str(ydl_error)}")
+                    raise
                 
             # 出力ファイルのパスを構築
             output_file = os.path.join(self.temp_dir, f"{video_id}.mp3")
             if not os.path.exists(output_file):
-                raise HTTPException(status_code=400, detail="File conversion failed")
+                logger.error(f"Expected output file not found: {output_file}")
+                # 出力ディレクトリの内容をログ
+                files = os.listdir(self.temp_dir)
+                logger.error(f"Files in directory: {files}")
+                raise Exception("File conversion failed - Output file not found")
                     
-            logger.info(f"Successfully downloaded and converted: {output_file}")
+            # ファイルサイズの確認
+            file_size = os.path.getsize(output_file)
+            if file_size == 0:
+                raise Exception(f"Generated file is empty: {output_file}")
+
+            logger.info(f"Successfully downloaded and converted: {output_file} ({file_size} bytes)")
             return output_file
 
         except Exception as e:
@@ -333,8 +346,15 @@ class AudioExtractor:
             logger.error(f"Error type: {type(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            raise HTTPException(status_code=400, detail="Download or conversion failed")
-
+            
+            # より具体的なエラー情報を提供
+            if isinstance(e, yt_dlp.utils.DownloadError):
+                raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
+            elif isinstance(e, FileNotFoundError):
+                raise HTTPException(status_code=400, detail="File not found after download")
+            else:
+                raise HTTPException(status_code=400, detail=f"Download or conversion failed: {str(e)}")
+            
     def _extract_video_id(self, url: str) -> str:
         """URLから動画IDを抽出"""
         import urllib.parse
