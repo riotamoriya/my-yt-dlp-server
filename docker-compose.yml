@@ -1,14 +1,51 @@
+# YouTube Audio Extractor Service - Memory Management Design
+#
+# メモリ管理の設計方針：
+# - コンテナメモリ制限: 512MB (ハード制限)
+# - 予約メモリ: 384MB (ソフト制限)
+# - 理由: OOM Killerによる予期せぬ停止を防ぎつつ、リソースを効率的に使用
+#
+# リソース制御の仕組み:
+# 1. コンテナレベル
+#   - deploy.resources.limitsで全体の上限を設定
+#   - deploy.resources.reservationsで優先的に確保するメモリ量を設定
+#
+# 2. アプリケーションレベル
+#   - ワーカー数制限: 並列処理の制御
+#   - 同時リクエスト数制限: 負荷の分散
+#   - バックログ制限: 待機リクエストの制御
+#
+# 運用上の注意:
+# - メモリ使用量は定期的にモニタリング
+# - 負荷に応じてワーカー数やリクエスト制限を調整
+# - TEMPディレクトリの定期的なクリーンアップが必要
+
 services:
   api:
     build: .
     restart: always
     ports:
-      - "7783:7783"  # 8000から7783に変更
+      - "7783:7783"
     volumes:
       - ./app:/app
     environment:
       - ENVIRONMENT=development
-      - MAX_FILE_SIZE=100000000  # 100MB
+      - MAX_FILE_SIZE=100000000
       - TEMP_DIR=/app/temp
-
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7783", "--timeout-keep-alive", "6000"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 384M
+    command: [
+      "uvicorn",
+      "main:app",
+      "--host", "0.0.0.0",
+      "--port", "7783",
+      "--timeout-keep-alive", "6000",
+      "--workers", "2",
+      "--limit-concurrency", "3",
+      "--backlog", "2",
+      "--memory-limit", "450000000"
+    ]
