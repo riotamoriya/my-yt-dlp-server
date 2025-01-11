@@ -1,36 +1,37 @@
-README.md
 # YouTube Audio Extractor
 
-FastAPIベースのYouTube動画から音声を抽出するAPIサービス。
+YouTubeから簡単に高品質な音声を抽出するツールキット。Firefox拡張機能とバックエンドAPIを組み合わせた、シンプルで使いやすいソリューション。
 
-https://claude.ai/chat/c67c13ff-9ca7-4f8d-aad6-466c1adc1dc5
+## 主な機能
+
+- 🎵 YouTubeから高品質な音声（MP3）を抽出
+- 🖱️ ワンクリックダウンロード
+- 🌐 Firefox拡張機能対応
+- 🚀 高速かつ簡単な操作
 
 ## 使用方法
-このコンテナは、バックエンドで使用することができます。ポート7783に対して、以下のようなRESTアクセスを行うことで使用できます。UIは適当に作成してください。基本的にはアドオンとして使用すると便利です。
 
-```bash
-curl -X 'POST' \
-  'http://localhost:7783/api/v1/extract-audio' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -d '{
-  "url": "https://www.youtube.com/watch?v=rBL930dHVkY"
-}'
-```
+1. Dockerコンテナを起動
+2. YouTubeページを開く
+3. 動画の下に表示される「MP3を保存」ボタンをクリック
+4. 高品質MP3を自動ダウンロード
 
+## 技術スペック
 
-## 機能
-- YouTube URLから音声(MP3)を抽出
-- 320kbps高品質音声出力
-- 非同期処理対応
+- **音声形式**: MP3
+- **音質**: 320 kbps (固定)
+- **対応動画**: YouTubeの公開動画
 
-## 開発環境のセットアップ
-1. リポジトリのクローン
-```bash
-git clone https://github.com/yourusername/youtube_audio_extractor.git
-cd youtube_audio_extractors
-```
+## 注意事項
 
-## APIアクセス
-- Swagger UI: http://localhost:7783/docs
-- ReDoc: http://localhost:7783/redoc
+このツールは個人の責任で使用してください。
+- 著作権を尊重すること
+- 個人利用目的のみ
+
+## フィードバック
+
+改善点や提案があれば、お気軽にIssueやプルリクエストでお知らせください。
+
+---
+
+**バージョン**: 1.0.0
