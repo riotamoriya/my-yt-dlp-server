@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "use localhost:7783",
+  "version": "1.0",
+  "description": "use localhost:7783",
+  "permissions": [
+    "activeTab",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ]
+}

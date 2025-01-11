@@ -1,0 +1,16 @@
+.audio-extract-btn {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 8px 12px;
+  background-color: #4CAF50;
+  color: white;
+  border: 1px solid #45a049;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  font-size: 14px;
+}
+
+.audio-extract-btn:hover {
+  background-color: #45a049;
+}
